@@ -42,12 +42,11 @@ class TextGenerationModel(object):
         feed = tf.one_hot(indices = x, depth = self._vocab_size)
         for i, prev_state in enumerate(tf.split(init_states, num_or_size_splits = self._lstm_num_layers, axis = 0)):
             c, h = tf.split(prev_state, num_or_size_splits = 2, axis = 1)
-            print(c.shape, h.shape)
             prev_state = tf.nn.rnn_cell.LSTMStateTuple(tf.squeeze(c), tf.squeeze(h))
             feed, state = tf.nn.dynamic_rnn(cell=tf.nn.rnn_cell.LSTMCell(num_units=self._lstm_num_hidden),
 											initial_state = prev_state,
                                             dtype=tf.float32, inputs=feed, scope = 'LSTM'+str(i))
-            states.append(state)
+            states.append(state[-1])
         logits_per_step = tf.layers.dense(feed, self._vocab_size)
         return logits_per_step, tf.stack(states)
 

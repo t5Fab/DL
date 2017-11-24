@@ -26,6 +26,10 @@ import tensorflow as tf
 from dataset import TextDataset
 from model import TextGenerationModel
 
+from scipy import stats
+
+import os
+import shutil
 
 def train(config):
 
@@ -70,11 +74,19 @@ def train(config):
     ###########################################################################
     # Implement code here.
     ###########################################################################
-    
-    with tf.Session() as sess:
-        sess.run(tf.global_variables_initializer())
+    num_losses = 5
+    losses = []
 
-        for train_step in range(int(config.train_steps) + 1):
+    saver = tf.train.Saver()
+
+    with tf.Session() as sess:
+        if config.load:
+            print('loading past session---------------------------------------------------')
+            saver.restore(sess, "./saved_session/generative_LSTM.ckpt")
+        else:
+            sess.run(tf.global_variables_initializer())
+
+        for train_step in range(int(global_step.eval()), int(config.train_steps) + 1):
 
             # Only for time measurement of step through network
             t1 = time.time()
@@ -85,6 +97,7 @@ def train(config):
             sentences, follows = dataset.batch(config.batch_size, config.seq_length)
 
             sess.run(apply_gradients_op, {x: sentences, y: follows})
+            
 
             # Only for time measurement of step through network
             t2 = time.time()
@@ -93,9 +106,13 @@ def train(config):
             # Output the training progress
             if train_step % config.print_every == 0:
                 sentences, follows = dataset.batch(config.batch_size, config.seq_length)
+                curr_loss = sess.run(loss, {x: sentences, y: follows})
+
+                losses.append(curr_loss)
+
                 print("[{}] Train Step {:04d}/{:04d}, Batch Size = {}, Examples/Sec = {:.2f}, Loss = {}".format(
                     datetime.now().strftime("%Y-%m-%d %H:%M"), train_step+1,
-                    int(config.train_steps), config.batch_size, examples_per_second, sess.run(loss, {x: sentences, y: follows})
+                    int(config.train_steps), config.batch_size, examples_per_second, curr_loss
                 ))
 
             if train_step % config.sample_every == 0:
@@ -104,22 +121,21 @@ def train(config):
                     sentences[:, i+1] = sess.run(prediction, {x: sentences})[:, i]
                 for s in sentences[:5]:
                     print(dataset.convert_to_string(s))
-                    
-    ## Bonus
-    N = 50
-    with tf.Session() as sess:
-        sess.run(tf.global_variables_initializer())
-        sentence_data = np.array([dataset.convert_to_list('We, the people ')])
-        sentence = ''
-        for i in range(N):
-            if sentences.shape[1] % config.seq_length == 0:
-                sentece += dataset.convert_to_string(sentence_data[0])
-                sentence_data = sess.run(prediction, {x: sentence_data, initial_state: prev_state})[:,-1:]
-            else:
-                if sentences.shape[1] + 1 % config.seq_length == 0:
-                    prev_state = sess.run(state, {x: sentence_data})
-                sentence_data = np.hstack((sentence_data, sess.run(prediction, {x: sentence_data})[:,-1:]))
-        print(sentence)
+
+                if config.save:
+                    saver.save(sess, './saved_session/generative_LSTM.ckpt')#, global_step = global_step)
+
+            if train_step % config.sample_every*10 == 0:
+                for filename in [f for f in os.listdir('./saved_session') if 'old' not in f]:
+                    shutil.copy('./saved_session/' + filename, './saved_session/old_checkpoint/' + filename)
+
+            # early stopping
+            if (len(losses) > 2*num_losses) and (train_step > config.train_steps/100):
+                old_loss = np.array(losses[(-2*num_losses):-num_losses])
+                new_loss = np.array(losses[-num_losses:])
+                if (stats.ttest_ind(old_loss, new_loss, equal_var = False)[1] > .5):
+                    print('early stopping at: ' + str(curr_loss))
+                    break
 
 
 if __name__ == "__main__":
@@ -144,6 +160,9 @@ if __name__ == "__main__":
     parser.add_argument('--max_norm_gradient', type=float, default=5.0, help='--')
 
     # Misc params
+    parser.add_argument('--load', type=bool, default=False, help='Controls if a previous session is loaded')
+    parser.add_argument('--save', type=bool, default=True, help='Indicates if the session gets saved')
+
     parser.add_argument('--gpu_mem_frac', type=float, default=0.5, help='Fraction of GPU memory to allocate')
     parser.add_argument('--log_device_placement', type=bool, default=False, help='Log device placement for debugging')
     parser.add_argument('--summary_path', type=str, default="./summaries/", help='Output path for summaries')
